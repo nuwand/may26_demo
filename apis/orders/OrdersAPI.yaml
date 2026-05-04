@@ -1,0 +1,1183 @@
+openapi: 3.0.3
+info:
+  title: ShopWave Orders API
+  description: |
+    The ShopWave Orders API enables order placement, management, and real-time order tracking
+    for the ShopWave marketplace.
+
+    ## Features
+    - Order creation and management
+    - Express checkout for streamlined purchasing
+    - Real-time order status updates via WebSub
+    - Order history and tracking
+    - Returns and refunds processing
+
+    ## WebSub Event Subscriptions
+    This API supports WebSub (WebHooks) for real-time event notifications:
+    - `order.placed` - New order created
+    - `order.confirmed` - Order confirmed by seller
+    - `order.shipped` - Order shipped with tracking info
+    - `order.delivered` - Order delivered to customer
+    - `order.cancelled` - Order cancelled
+    - `order.refunded` - Refund processed
+
+    ## AI Agent Integration
+    This API is optimized for AI agent consumption. Use `placeOrder` to complete purchases
+    on behalf of customers with proper authorization.
+  version: 2.0.0
+  contact:
+    name: ShopWave API Support
+    email: api-support@shopwave.com
+    url: https://developers.shopwave.com
+  license:
+    name: Commercial
+    url: https://shopwave.com/api-license
+  x-data-class: public
+  x-websub-enabled: true
+
+servers:
+  - url: https://api.shopwave.com/orders/v2
+    description: Production server
+  - url: https://api-staging.shopwave.com/orders/v2
+    description: Staging server
+
+tags:
+  - name: Orders
+    description: Order management operations
+  - name: Express Checkout
+    description: Streamlined checkout flow
+  - name: Tracking
+    description: Shipment tracking
+  - name: Returns
+    description: Returns and refunds
+  - name: WebSub
+    description: Real-time event subscriptions
+
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      summary: List orders
+      description: |
+        Retrieve a list of orders. For B2B partners, returns orders placed through their integration.
+        For internal use, supports filtering across all orders.
+      tags:
+        - Orders
+      parameters:
+        - name: customerId
+          in: query
+          description: Filter by customer ID
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by order status
+          schema:
+            type: string
+            enum: [pending, confirmed, processing, shipped, delivered, cancelled, refunded]
+        - name: fromDate
+          in: query
+          description: Filter orders from this date
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          description: Filter orders until this date
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:read]
+
+    post:
+      operationId: placeOrder
+      summary: Place a new order
+      description: |
+        Create a new order with the specified items and shipping details.
+
+        **Tool hint for AI agents**: Use this endpoint to complete a purchase for a customer.
+        Requires `customer:verified` scope for agent-initiated orders.
+      tags:
+        - Orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Invalid order request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Conflict - items unavailable or price changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderConflictError'
+        '422':
+          description: Unprocessable - payment failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentError'
+      security:
+        - OAuth2: [orders:write, customer:verified]
+
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      summary: Get order details
+      description: Retrieve detailed information about a specific order.
+      tags:
+        - Orders
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "ORD-20261126-XYZ789"
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:read]
+
+    patch:
+      operationId: updateOrder
+      summary: Update order details
+      description: |
+        Update order details such as shipping address (before shipping)
+        or add notes to the order.
+      tags:
+        - Orders
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrderRequest'
+      responses:
+        '200':
+          description: Order updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Invalid update request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Order cannot be modified in current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:write]
+
+  /orders/{orderId}/cancel:
+    post:
+      operationId: cancelOrder
+      summary: Cancel an order
+      description: |
+        Cancel an order. Only orders in 'pending' or 'confirmed' status can be cancelled.
+        Once shipped, use the returns process instead.
+      tags:
+        - Orders
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  enum: [customer_request, out_of_stock, pricing_error, fraud_suspected, other]
+                notes:
+                  type: string
+                  description: Additional details about cancellation
+      responses:
+        '200':
+          description: Order cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Order cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:write]
+
+  /orders/{orderId}/express-checkout:
+    post:
+      operationId: expressCheckout
+      summary: Express checkout for an order
+      description: |
+        Streamlined checkout that uses saved payment methods and shipping preferences.
+        Ideal for returning customers and one-click purchase scenarios.
+
+        **New in v2.0**: Added for Black Friday high-volume checkout optimization.
+
+        **Tool hint for AI agents**: Use this for faster checkout when customer has
+        saved preferences. Falls back to standard checkout if preferences not available.
+      tags:
+        - Express Checkout
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Draft order ID from cart
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpressCheckoutRequest'
+      responses:
+        '200':
+          description: Express checkout completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Express checkout not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Payment failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentError'
+      security:
+        - OAuth2: [orders:write, customer:verified]
+
+  /orders/{orderId}/tracking:
+    get:
+      operationId: getOrderTracking
+      summary: Get shipment tracking information
+      description: |
+        Retrieve real-time tracking information for an order's shipment.
+        Includes carrier details, tracking number, and delivery estimates.
+      tags:
+        - Tracking
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tracking information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackingInfo'
+        '404':
+          description: Order not found or not yet shipped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:read]
+
+  /orders/{orderId}/returns:
+    post:
+      operationId: initiateReturn
+      summary: Initiate a return
+      description: |
+        Start a return process for items in a delivered order.
+        Generates return shipping label and instructions.
+      tags:
+        - Returns
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReturnRequest'
+      responses:
+        '201':
+          description: Return initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Return'
+        '400':
+          description: Return not eligible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:write]
+
+  /returns/{returnId}:
+    get:
+      operationId: getReturn
+      summary: Get return details
+      description: Retrieve status and details of a return request.
+      tags:
+        - Returns
+      parameters:
+        - name: returnId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Return details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Return'
+        '404':
+          description: Return not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [orders:read]
+
+  /subscriptions:
+    get:
+      operationId: listSubscriptions
+      summary: List WebSub subscriptions
+      description: List all active WebSub subscriptions for your application.
+      tags:
+        - WebSub
+      responses:
+        '200':
+          description: List of subscriptions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [webhooks:read]
+
+    post:
+      operationId: createSubscription
+      summary: Subscribe to order events
+      description: |
+        Create a WebSub subscription to receive real-time notifications
+        for order events (placed, shipped, delivered, etc.).
+
+        Your callback URL will receive POST requests with event payloads.
+      tags:
+        - WebSub
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionRequest'
+      responses:
+        '201':
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          description: Invalid subscription request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [webhooks:write]
+
+  /subscriptions/{subscriptionId}:
+    get:
+      operationId: getSubscription
+      summary: Get subscription details
+      description: Retrieve details of a specific WebSub subscription.
+      tags:
+        - WebSub
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Subscription details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '404':
+          description: Subscription not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [webhooks:read]
+
+    delete:
+      operationId: deleteSubscription
+      summary: Delete a subscription
+      description: Remove a WebSub subscription and stop receiving events.
+      tags:
+        - WebSub
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Subscription deleted
+        '404':
+          description: Subscription not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [webhooks:write]
+
+  /hub:
+    post:
+      operationId: websubHub
+      summary: WebSub Hub endpoint
+      description: |
+        Standard WebSub hub endpoint for subscription management.
+        Supports subscribe and unsubscribe modes per W3C WebSub specification.
+      tags:
+        - WebSub
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - hub.mode
+                - hub.topic
+                - hub.callback
+              properties:
+                hub.mode:
+                  type: string
+                  enum: [subscribe, unsubscribe]
+                hub.topic:
+                  type: string
+                  description: Event topic URL
+                hub.callback:
+                  type: string
+                  format: uri
+                  description: Callback URL to receive events
+                hub.secret:
+                  type: string
+                  description: Secret for HMAC signature verification
+                hub.lease_seconds:
+                  type: integer
+                  description: Requested subscription duration
+      responses:
+        '202':
+          description: Subscription request accepted, verification pending
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - OAuth2: [webhooks:write]
+
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.shopwave.com/oauth2/authorize
+          tokenUrl: https://auth.shopwave.com/oauth2/token
+          scopes:
+            orders:read: Read order information
+            orders:write: Create and modify orders
+            customer:verified: Verified customer access for AI agents
+            webhooks:read: Read webhook subscriptions
+            webhooks:write: Manage webhook subscriptions
+
+  schemas:
+    Order:
+      type: object
+      properties:
+        orderId:
+          type: string
+          description: Unique order identifier
+          example: "ORD-20261126-XYZ789"
+        status:
+          type: string
+          enum: [pending, confirmed, processing, shipped, delivered, cancelled, refunded]
+          example: "confirmed"
+        customerId:
+          type: string
+          example: "cust_abc123"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        subtotal:
+          type: number
+          format: float
+          description: Sum of item prices
+          example: 149.98
+        tax:
+          type: number
+          format: float
+          example: 12.00
+        shipping:
+          type: number
+          format: float
+          example: 5.99
+        discount:
+          type: number
+          format: float
+          example: 15.00
+        total:
+          type: number
+          format: float
+          description: Final order total
+          example: 152.97
+        currency:
+          type: string
+          example: "USD"
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        billingAddress:
+          $ref: '#/components/schemas/Address'
+        paymentMethod:
+          $ref: '#/components/schemas/PaymentMethodSummary'
+        shippingMethod:
+          type: string
+          example: "standard"
+        estimatedDelivery:
+          type: string
+          format: date
+          example: "2026-12-01"
+        tracking:
+          $ref: '#/components/schemas/TrackingSummary'
+        notes:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      properties:
+        itemId:
+          type: string
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+          example: "TrailMaster Waterproof Hiking Boots"
+        variant:
+          type: object
+          properties:
+            size:
+              type: string
+            color:
+              type: string
+        quantity:
+          type: integer
+          example: 1
+        unitPrice:
+          type: number
+          format: float
+          example: 129.99
+        totalPrice:
+          type: number
+          format: float
+          example: 129.99
+        imageUrl:
+          type: string
+          format: uri
+        sellerId:
+          type: string
+
+    OrderList:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderSummary'
+        totalCount:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        totalPages:
+          type: integer
+
+    OrderSummary:
+      type: object
+      properties:
+        orderId:
+          type: string
+        status:
+          type: string
+        itemCount:
+          type: integer
+        total:
+          type: number
+          format: float
+        currency:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - items
+        - shippingAddress
+        - paymentMethodId
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required:
+              - productId
+              - quantity
+            properties:
+              productId:
+                type: string
+              sku:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+          example:
+            - productId: "PROD-HB-12345"
+              sku: "TM-HB-BRN-10"
+              quantity: 1
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        billingAddress:
+          $ref: '#/components/schemas/Address'
+        paymentMethodId:
+          type: string
+          description: Saved payment method ID or token from payment flow
+        shippingMethod:
+          type: string
+          enum: [standard, express, overnight, pickup]
+          default: standard
+        couponCode:
+          type: string
+        notes:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    UpdateOrderRequest:
+      type: object
+      properties:
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        notes:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ExpressCheckoutRequest:
+      type: object
+      properties:
+        savedAddressId:
+          type: string
+          description: Use saved shipping address
+        savedPaymentMethodId:
+          type: string
+          description: Use saved payment method
+        shippingMethod:
+          type: string
+          enum: [standard, express, overnight]
+        applyDefaultCoupon:
+          type: boolean
+          default: true
+        confirmationMethod:
+          type: string
+          enum: [auto, manual]
+          default: auto
+          description: Auto confirms immediately, manual requires confirmation step
+
+    Address:
+      type: object
+      required:
+        - name
+        - line1
+        - city
+        - state
+        - postalCode
+        - country
+      properties:
+        name:
+          type: string
+          example: "Jamie Smith"
+        line1:
+          type: string
+          example: "123 Main Street"
+        line2:
+          type: string
+          example: "Apt 4B"
+        city:
+          type: string
+          example: "San Francisco"
+        state:
+          type: string
+          example: "CA"
+        postalCode:
+          type: string
+          example: "94102"
+        country:
+          type: string
+          example: "US"
+        phone:
+          type: string
+          example: "+1-555-123-4567"
+
+    PaymentMethodSummary:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [card, paypal, apple_pay, google_pay, bank_transfer]
+        last4:
+          type: string
+          example: "4242"
+        brand:
+          type: string
+          example: "visa"
+        expiryMonth:
+          type: integer
+        expiryYear:
+          type: integer
+
+    TrackingSummary:
+      type: object
+      properties:
+        carrier:
+          type: string
+          example: "FedEx"
+        trackingNumber:
+          type: string
+          example: "794644790299"
+        trackingUrl:
+          type: string
+          format: uri
+        status:
+          type: string
+          example: "in_transit"
+
+    TrackingInfo:
+      type: object
+      properties:
+        orderId:
+          type: string
+        carrier:
+          type: string
+        trackingNumber:
+          type: string
+        trackingUrl:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [label_created, picked_up, in_transit, out_for_delivery, delivered, exception]
+        estimatedDelivery:
+          type: string
+          format: date-time
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              status:
+                type: string
+              location:
+                type: string
+              description:
+                type: string
+
+    ReturnRequest:
+      type: object
+      required:
+        - items
+        - reason
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required:
+              - itemId
+              - quantity
+            properties:
+              itemId:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+        reason:
+          type: string
+          enum: [wrong_item, damaged, not_as_described, no_longer_needed, other]
+        description:
+          type: string
+        preferredRefundMethod:
+          type: string
+          enum: [original_payment, store_credit]
+          default: original_payment
+
+    Return:
+      type: object
+      properties:
+        returnId:
+          type: string
+          example: "RET-20261201-ABC123"
+        orderId:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected, shipped, received, refunded]
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              itemId:
+                type: string
+              productName:
+                type: string
+              quantity:
+                type: integer
+              refundAmount:
+                type: number
+                format: float
+        reason:
+          type: string
+        returnLabel:
+          type: object
+          properties:
+            carrier:
+              type: string
+            trackingNumber:
+              type: string
+            labelUrl:
+              type: string
+              format: uri
+        refundAmount:
+          type: number
+          format: float
+        refundMethod:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Subscription:
+      type: object
+      properties:
+        subscriptionId:
+          type: string
+          example: "sub_abc123"
+        topic:
+          type: string
+          description: Event topic
+          example: "orders.*"
+        callbackUrl:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+          example: ["order.placed", "order.shipped", "order.delivered"]
+        status:
+          type: string
+          enum: [active, pending, expired, failed]
+        secret:
+          type: string
+          description: HMAC secret (only shown on creation)
+        leaseSeconds:
+          type: integer
+          description: Subscription duration
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    SubscriptionRequest:
+      type: object
+      required:
+        - callbackUrl
+        - events
+      properties:
+        callbackUrl:
+          type: string
+          format: uri
+          description: URL to receive event notifications
+          example: "https://partner.example.com/webhooks/shopwave"
+        events:
+          type: array
+          description: Events to subscribe to
+          items:
+            type: string
+            enum: [order.placed, order.confirmed, order.shipped, order.delivered, order.cancelled, order.refunded]
+          example: ["order.placed", "order.shipped", "order.delivered"]
+        secret:
+          type: string
+          description: Secret for HMAC signature verification
+        leaseSeconds:
+          type: integer
+          description: Subscription duration (default 30 days)
+          default: 2592000
+          minimum: 86400
+          maximum: 31536000
+
+    SubscriptionList:
+      type: object
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscription'
+        totalCount:
+          type: integer
+
+    OrderConflictError:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "ORDER_CONFLICT"
+        message:
+          type: string
+        conflicts:
+          type: array
+          items:
+            type: object
+            properties:
+              itemId:
+                type: string
+              issue:
+                type: string
+                enum: [out_of_stock, price_changed, discontinued]
+              details:
+                type: object
+                additionalProperties: true
+
+    PaymentError:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "PAYMENT_FAILED"
+        message:
+          type: string
+          example: "Payment was declined by the card issuer"
+        declineCode:
+          type: string
+          example: "insufficient_funds"
+        paymentMethodId:
+          type: string
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+  callbacks:
+    orderEvents:
+      '{$request.body#/callbackUrl}':
+        post:
+          summary: Order event notification
+          description: Webhook payload sent when order events occur
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    eventId:
+                      type: string
+                    eventType:
+                      type: string
+                      enum: [order.placed, order.confirmed, order.shipped, order.delivered, order.cancelled, order.refunded]
+                    timestamp:
+                      type: string
+                      format: date-time
+                    data:
+                      $ref: '#/components/schemas/Order'
+          responses:
+            '200':
+              description: Event received successfully
+            '410':
+              description: Subscription should be cancelled

@@ -1,0 +1,941 @@
+openapi: 3.0.3
+info:
+  title: ShopWave Inventory API
+  description: |
+    Internal API for real-time inventory and stock management across the ShopWave marketplace.
+
+    This API is for internal use only and provides:
+    - Real-time stock level queries
+    - Stock reservation for checkout flows
+    - Warehouse location lookups
+    - Low-stock alerts and monitoring
+
+    **Access**: This API is subscription-less and restricted to internal ShopWave systems only.
+    Authentication is handled via internal service mesh / mTLS.
+  version: 1.0.0
+  contact:
+    name: ShopWave Platform Team
+    email: platform@shopwave.internal
+  x-data-class: internal
+  x-visibility: org-only
+  x-subscription-less: true
+
+servers:
+  - url: https://internal-api.shopwave.com/inventory/v1
+    description: Internal production
+  - url: https://internal-api-staging.shopwave.com/inventory/v1
+    description: Internal staging
+
+tags:
+  - name: Stock
+    description: Stock level queries and management
+  - name: Reservations
+    description: Stock reservation for checkout
+  - name: Warehouses
+    description: Warehouse and fulfillment center operations
+  - name: Alerts
+    description: Low-stock monitoring and alerts
+
+paths:
+  /stock/{sku}:
+    get:
+      operationId: getStockLevel
+      summary: Get stock level for a SKU
+      description: |
+        Returns the current stock level for a specific SKU across all warehouses
+        or for a specific warehouse location.
+      tags:
+        - Stock
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          description: Stock keeping unit identifier
+          schema:
+            type: string
+          example: "TM-HB-BRN-10"
+        - name: warehouseId
+          in: query
+          description: Filter by specific warehouse
+          schema:
+            type: string
+          example: "WH-EAST-001"
+        - name: includeReserved
+          in: query
+          description: Include reserved stock in response
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Stock level information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockLevel'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: SKU not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /stock/batch:
+    post:
+      operationId: getStockLevelsBatch
+      summary: Get stock levels for multiple SKUs
+      description: |
+        Batch query for stock levels. Supports up to 100 SKUs per request.
+        Used by the mobile app and warehouse systems for efficient stock checks.
+      tags:
+        - Stock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - skus
+              properties:
+                skus:
+                  type: array
+                  description: List of SKUs to check
+                  maxItems: 100
+                  items:
+                    type: string
+                  example: ["TM-HB-BRN-10", "TM-HB-BRN-11", "TM-HB-BLK-10"]
+                warehouseId:
+                  type: string
+                  description: Filter by warehouse (optional)
+      responses:
+        '200':
+          description: Stock levels for requested SKUs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchStockResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /stock/{sku}/adjust:
+    post:
+      operationId: adjustStock
+      summary: Adjust stock level
+      description: |
+        Adjust stock levels for a SKU. Used for inventory corrections,
+        receiving shipments, and manual adjustments.
+      tags:
+        - Stock
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockAdjustment'
+      responses:
+        '200':
+          description: Stock adjusted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockLevel'
+        '400':
+          description: Invalid adjustment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Conflict - insufficient stock for negative adjustment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /reservations:
+    post:
+      operationId: createReservation
+      summary: Reserve stock for checkout
+      description: |
+        Creates a temporary stock reservation for a checkout session.
+        Reservations automatically expire after the configured timeout (default 15 minutes).
+      tags:
+        - Reservations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationRequest'
+      responses:
+        '201':
+          description: Reservation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Insufficient stock available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsufficientStockError'
+      security:
+        - InternalAuth: []
+
+  /reservations/{reservationId}:
+    get:
+      operationId: getReservation
+      summary: Get reservation details
+      description: Retrieve details of an existing stock reservation.
+      tags:
+        - Reservations
+      parameters:
+        - name: reservationId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "RSV-20261126-ABC123"
+      responses:
+        '200':
+          description: Reservation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '404':
+          description: Reservation not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+    delete:
+      operationId: cancelReservation
+      summary: Cancel a stock reservation
+      description: |
+        Releases the reserved stock back to available inventory.
+        Called when a checkout is abandoned or cart is cleared.
+      tags:
+        - Reservations
+      parameters:
+        - name: reservationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Reservation cancelled successfully
+        '404':
+          description: Reservation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /reservations/{reservationId}/confirm:
+    post:
+      operationId: confirmReservation
+      summary: Confirm reservation and deduct stock
+      description: |
+        Confirms a reservation after successful payment, permanently
+        deducting the stock from inventory.
+      tags:
+        - Reservations
+      parameters:
+        - name: reservationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - orderId
+              properties:
+                orderId:
+                  type: string
+                  description: Associated order ID
+                  example: "ORD-20261126-XYZ789"
+      responses:
+        '200':
+          description: Reservation confirmed and stock deducted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationConfirmation'
+        '404':
+          description: Reservation not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Reservation already confirmed or cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /warehouses:
+    get:
+      operationId: listWarehouses
+      summary: List all warehouses
+      description: Retrieve a list of all fulfillment centers and warehouses.
+      tags:
+        - Warehouses
+      parameters:
+        - name: region
+          in: query
+          description: Filter by geographic region
+          schema:
+            type: string
+            enum: [EAST, WEST, CENTRAL, SOUTH]
+        - name: active
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: List of warehouses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WarehouseList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /warehouses/{warehouseId}:
+    get:
+      operationId: getWarehouse
+      summary: Get warehouse details
+      description: Retrieve detailed information about a specific warehouse.
+      tags:
+        - Warehouses
+      parameters:
+        - name: warehouseId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "WH-EAST-001"
+      responses:
+        '200':
+          description: Warehouse details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        '404':
+          description: Warehouse not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /warehouses/{warehouseId}/stock:
+    get:
+      operationId: getWarehouseStock
+      summary: Get all stock in a warehouse
+      description: |
+        Retrieve complete inventory listing for a warehouse.
+        Supports pagination and filtering.
+      tags:
+        - Warehouses
+      parameters:
+        - name: warehouseId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: lowStock
+          in: query
+          description: Only show items below reorder threshold
+          schema:
+            type: boolean
+            default: false
+        - name: category
+          in: query
+          description: Filter by product category
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        '200':
+          description: Warehouse inventory listing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WarehouseStockList'
+        '404':
+          description: Warehouse not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /alerts/low-stock:
+    get:
+      operationId: getLowStockAlerts
+      summary: Get low stock alerts
+      description: |
+        Retrieve items that are below their reorder threshold.
+        Used by warehouse management and purchasing systems.
+      tags:
+        - Alerts
+      parameters:
+        - name: warehouseId
+          in: query
+          description: Filter by warehouse
+          schema:
+            type: string
+        - name: severity
+          in: query
+          description: Filter by alert severity
+          schema:
+            type: string
+            enum: [critical, warning, info]
+        - name: acknowledged
+          in: query
+          description: Filter by acknowledgment status
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Low stock alerts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+  /alerts/{alertId}/acknowledge:
+    post:
+      operationId: acknowledgeAlert
+      summary: Acknowledge a low stock alert
+      description: Mark a low stock alert as acknowledged by warehouse staff.
+      tags:
+        - Alerts
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                acknowledgedBy:
+                  type: string
+                  description: User ID acknowledging the alert
+                notes:
+                  type: string
+                  description: Optional notes about action taken
+      responses:
+        '200':
+          description: Alert acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '404':
+          description: Alert not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - InternalAuth: []
+
+components:
+  securitySchemes:
+    InternalAuth:
+      type: http
+      scheme: bearer
+      description: Internal service authentication via mTLS or service mesh token
+
+  schemas:
+    StockLevel:
+      type: object
+      properties:
+        sku:
+          type: string
+          example: "TM-HB-BRN-10"
+        productId:
+          type: string
+          example: "PROD-HB-12345"
+        productName:
+          type: string
+          example: "TrailMaster Waterproof Hiking Boots - Brown - Size 10"
+        totalAvailable:
+          type: integer
+          description: Total available stock across all warehouses
+          example: 156
+        totalReserved:
+          type: integer
+          description: Stock currently reserved for pending orders
+          example: 23
+        totalOnHand:
+          type: integer
+          description: Total physical stock (available + reserved)
+          example: 179
+        reorderThreshold:
+          type: integer
+          description: Stock level that triggers reorder alert
+          example: 50
+        reorderQuantity:
+          type: integer
+          description: Recommended quantity to reorder
+          example: 100
+        warehouseBreakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/WarehouseStock'
+        lastUpdated:
+          type: string
+          format: date-time
+
+    WarehouseStock:
+      type: object
+      properties:
+        warehouseId:
+          type: string
+          example: "WH-EAST-001"
+        warehouseName:
+          type: string
+          example: "East Coast Fulfillment Center"
+        available:
+          type: integer
+          example: 89
+        reserved:
+          type: integer
+          example: 12
+        onHand:
+          type: integer
+          example: 101
+        location:
+          type: string
+          description: Bin/shelf location within warehouse
+          example: "A-12-3"
+
+    BatchStockResponse:
+      type: object
+      properties:
+        stocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockLevel'
+        notFound:
+          type: array
+          description: SKUs that were not found
+          items:
+            type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    StockAdjustment:
+      type: object
+      required:
+        - warehouseId
+        - quantity
+        - reason
+      properties:
+        warehouseId:
+          type: string
+          example: "WH-EAST-001"
+        quantity:
+          type: integer
+          description: Adjustment amount (positive to add, negative to subtract)
+          example: 50
+        reason:
+          type: string
+          enum: [received, damaged, returned, correction, transfer_in, transfer_out]
+          example: "received"
+        referenceId:
+          type: string
+          description: Reference document (PO number, return ID, etc.)
+          example: "PO-2026-45678"
+        notes:
+          type: string
+          example: "Shipment from supplier received"
+        adjustedBy:
+          type: string
+          description: User ID making the adjustment
+          example: "user-warehouse-001"
+
+    ReservationRequest:
+      type: object
+      required:
+        - items
+        - sessionId
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required:
+              - sku
+              - quantity
+            properties:
+              sku:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+          example:
+            - sku: "TM-HB-BRN-10"
+              quantity: 1
+            - sku: "TM-SOCK-L"
+              quantity: 2
+        sessionId:
+          type: string
+          description: Checkout session ID
+          example: "sess_abc123xyz"
+        customerId:
+          type: string
+          description: Customer ID if logged in
+        expiresInMinutes:
+          type: integer
+          description: Reservation timeout (default 15)
+          default: 15
+          minimum: 5
+          maximum: 60
+        preferredWarehouse:
+          type: string
+          description: Preferred fulfillment warehouse
+
+    Reservation:
+      type: object
+      properties:
+        reservationId:
+          type: string
+          example: "RSV-20261126-ABC123"
+        sessionId:
+          type: string
+        status:
+          type: string
+          enum: [active, confirmed, expired, cancelled]
+          example: "active"
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              quantity:
+                type: integer
+              warehouseId:
+                type: string
+              unitPrice:
+                type: number
+                format: float
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    ReservationConfirmation:
+      type: object
+      properties:
+        reservationId:
+          type: string
+        orderId:
+          type: string
+        status:
+          type: string
+          enum: [confirmed]
+        confirmedAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              quantity:
+                type: integer
+              warehouseId:
+                type: string
+              stockDeducted:
+                type: boolean
+
+    InsufficientStockError:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "INSUFFICIENT_STOCK"
+        message:
+          type: string
+          example: "One or more items have insufficient stock"
+        unavailableItems:
+          type: array
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              requested:
+                type: integer
+              available:
+                type: integer
+
+    Warehouse:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "WH-EAST-001"
+        name:
+          type: string
+          example: "East Coast Fulfillment Center"
+        region:
+          type: string
+          enum: [EAST, WEST, CENTRAL, SOUTH]
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            zipCode:
+              type: string
+            country:
+              type: string
+        coordinates:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+        active:
+          type: boolean
+        capacity:
+          type: object
+          properties:
+            totalSlots:
+              type: integer
+            usedSlots:
+              type: integer
+            utilizationPercent:
+              type: number
+        contactEmail:
+          type: string
+          format: email
+        contactPhone:
+          type: string
+        operatingHours:
+          type: object
+          additionalProperties:
+            type: string
+
+    WarehouseList:
+      type: object
+      properties:
+        warehouses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Warehouse'
+        totalCount:
+          type: integer
+
+    WarehouseStockList:
+      type: object
+      properties:
+        warehouseId:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              productId:
+                type: string
+              productName:
+                type: string
+              available:
+                type: integer
+              reserved:
+                type: integer
+              location:
+                type: string
+              lastMovement:
+                type: string
+                format: date-time
+        totalCount:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    Alert:
+      type: object
+      properties:
+        alertId:
+          type: string
+          example: "ALT-20261126-001"
+        type:
+          type: string
+          enum: [low_stock, out_of_stock, expiring_reservation]
+        severity:
+          type: string
+          enum: [critical, warning, info]
+        sku:
+          type: string
+        productName:
+          type: string
+        warehouseId:
+          type: string
+        currentStock:
+          type: integer
+        threshold:
+          type: integer
+        message:
+          type: string
+        acknowledged:
+          type: boolean
+        acknowledgedBy:
+          type: string
+        acknowledgedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    AlertList:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        summary:
+          type: object
+          properties:
+            critical:
+              type: integer
+            warning:
+              type: integer
+            info:
+              type: integer
+            total:
+              type: integer
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true

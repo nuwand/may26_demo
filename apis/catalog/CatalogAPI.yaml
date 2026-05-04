@@ -1,0 +1,857 @@
+openapi: 3.0.3
+info:
+  title: ShopWave Catalog API
+  description: |
+    The ShopWave Catalog API provides access to the complete product catalog for the ShopWave marketplace.
+
+    This API enables data partners to search, browse, and retrieve detailed product information
+    including pricing, availability, categories, and seller details.
+
+    ## Use Cases
+    - Product search and discovery
+    - Category browsing
+    - Price comparison and analytics
+    - Inventory availability checks
+    - Seller and brand information retrieval
+
+    ## AI Agent Integration
+    This API is optimized for AI agent consumption. Use `searchProducts` for natural language
+    product queries and `compareProducts` to evaluate multiple items side-by-side.
+  version: 1.0.0
+  contact:
+    name: ShopWave API Support
+    email: api-support@shopwave.com
+    url: https://developers.shopwave.com
+  license:
+    name: Commercial
+    url: https://shopwave.com/api-license
+  x-data-class: public
+  x-monetization-enabled: true
+
+servers:
+  - url: https://api.shopwave.com/catalog/v1
+    description: Production server
+  - url: https://api-staging.shopwave.com/catalog/v1
+    description: Staging server
+
+tags:
+  - name: Products
+    description: Product search and retrieval operations
+  - name: Categories
+    description: Product category management
+  - name: Brands
+    description: Brand and seller information
+  - name: Recommendations
+    description: AI-powered product recommendations
+
+paths:
+  /products:
+    get:
+      operationId: searchProducts
+      summary: Search products in the catalog
+      description: |
+        Search for products using keywords, filters, and sorting options.
+        Supports natural language queries for AI agent integration.
+
+        **Tool hint for AI agents**: Use this endpoint to find products matching
+        customer requirements like "hiking boots under $100" or "wireless headphones with noise cancellation".
+      tags:
+        - Products
+      parameters:
+        - name: q
+          in: query
+          description: Search query (supports natural language)
+          schema:
+            type: string
+          example: "hiking boots waterproof"
+        - name: category
+          in: query
+          description: Filter by category ID
+          schema:
+            type: string
+          example: "outdoor-footwear"
+        - name: brand
+          in: query
+          description: Filter by brand name
+          schema:
+            type: string
+          example: "TrailMaster"
+        - name: minPrice
+          in: query
+          description: Minimum price filter
+          schema:
+            type: number
+            format: float
+          example: 50.00
+        - name: maxPrice
+          in: query
+          description: Maximum price filter
+          schema:
+            type: number
+            format: float
+          example: 150.00
+        - name: inStock
+          in: query
+          description: Filter to only show in-stock items
+          schema:
+            type: boolean
+            default: true
+        - name: size
+          in: query
+          description: Filter by size (apparel/footwear)
+          schema:
+            type: string
+          example: "10"
+        - name: color
+          in: query
+          description: Filter by color
+          schema:
+            type: string
+          example: "brown"
+        - name: rating
+          in: query
+          description: Minimum customer rating (1-5)
+          schema:
+            type: number
+            minimum: 1
+            maximum: 5
+          example: 4.0
+        - name: sort
+          in: query
+          description: Sort order for results
+          schema:
+            type: string
+            enum: [relevance, price_asc, price_desc, rating, newest, bestselling]
+            default: relevance
+        - name: page
+          in: query
+          description: Page number for pagination
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of results per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Successful search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSearchResponse'
+        '400':
+          description: Invalid search parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid or missing API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /products/{productId}:
+    get:
+      operationId: getProduct
+      summary: Get product details
+      description: |
+        Retrieve detailed information about a specific product including
+        full description, specifications, pricing, variants, and seller information.
+
+        **Tool hint for AI agents**: Use this to get complete details about a product
+        after finding it via search.
+      tags:
+        - Products
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          description: Unique product identifier
+          schema:
+            type: string
+          example: "PROD-HB-12345"
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /products/compare:
+    post:
+      operationId: compareProducts
+      summary: Compare multiple products
+      description: |
+        Compare up to 5 products side-by-side, highlighting differences in
+        price, features, ratings, and specifications.
+
+        **Tool hint for AI agents**: Use this endpoint when a customer wants to
+        compare multiple options before making a purchase decision.
+      tags:
+        - Products
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - productIds
+              properties:
+                productIds:
+                  type: array
+                  description: List of product IDs to compare
+                  minItems: 2
+                  maxItems: 5
+                  items:
+                    type: string
+                  example: ["PROD-HB-12345", "PROD-HB-67890", "PROD-HB-11111"]
+                attributes:
+                  type: array
+                  description: Specific attributes to compare (optional)
+                  items:
+                    type: string
+                  example: ["price", "rating", "waterproof", "weight"]
+      responses:
+        '200':
+          description: Product comparison results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductComparison'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /categories:
+    get:
+      operationId: listCategories
+      summary: List all product categories
+      description: Retrieve the complete category hierarchy for the ShopWave marketplace.
+      tags:
+        - Categories
+      parameters:
+        - name: parentId
+          in: query
+          description: Filter to show only subcategories of a parent
+          schema:
+            type: string
+        - name: depth
+          in: query
+          description: Maximum depth of category tree to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+            default: 2
+      responses:
+        '200':
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /categories/{categoryId}:
+    get:
+      operationId: getCategory
+      summary: Get category details
+      description: Retrieve details about a specific category including subcategories and product count.
+      tags:
+        - Categories
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          description: Category identifier
+          schema:
+            type: string
+          example: "outdoor-footwear"
+      responses:
+        '200':
+          description: Category details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '404':
+          description: Category not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /brands:
+    get:
+      operationId: listBrands
+      summary: List all brands
+      description: Retrieve a list of all brands and sellers on the ShopWave marketplace.
+      tags:
+        - Brands
+      parameters:
+        - name: category
+          in: query
+          description: Filter brands by category
+          schema:
+            type: string
+        - name: verified
+          in: query
+          description: Filter to show only verified sellers
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of brands
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /brands/{brandId}:
+    get:
+      operationId: getBrand
+      summary: Get brand details
+      description: Retrieve detailed information about a specific brand or seller.
+      tags:
+        - Brands
+      parameters:
+        - name: brandId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "trailmaster"
+      responses:
+        '200':
+          description: Brand details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Brand'
+        '404':
+          description: Brand not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read]
+
+  /recommendations:
+    get:
+      operationId: getRecommendations
+      summary: Get personalized product recommendations
+      description: |
+        Get AI-powered product recommendations based on browsing history,
+        purchase patterns, or specified preferences.
+
+        **Tool hint for AI agents**: Use this to suggest products to customers
+        based on their expressed preferences or past interactions.
+      tags:
+        - Recommendations
+      parameters:
+        - name: customerId
+          in: query
+          description: Customer ID for personalized recommendations
+          schema:
+            type: string
+        - name: productId
+          in: query
+          description: Get recommendations similar to this product
+          schema:
+            type: string
+        - name: category
+          in: query
+          description: Limit recommendations to a category
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+      responses:
+        '200':
+          description: Product recommendations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - ApiKeyAuth: []
+        - OAuth2: [catalog:read, recommendations:read]
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for accessing the Catalog API
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.shopwave.com/oauth2/token
+          scopes:
+            catalog:read: Read access to product catalog
+            recommendations:read: Access to recommendation engine
+
+  schemas:
+    Product:
+      type: object
+      required:
+        - id
+        - name
+        - price
+        - currency
+      properties:
+        id:
+          type: string
+          description: Unique product identifier
+          example: "PROD-HB-12345"
+        sku:
+          type: string
+          description: Stock keeping unit
+          example: "TM-HB-BRN-10"
+        name:
+          type: string
+          description: Product name
+          example: "TrailMaster Waterproof Hiking Boots"
+        description:
+          type: string
+          description: Full product description
+          example: "Premium waterproof hiking boots with Gore-Tex lining..."
+        shortDescription:
+          type: string
+          description: Brief product summary
+          example: "Waterproof hiking boots for all-terrain adventures"
+        price:
+          type: number
+          format: float
+          description: Current price
+          example: 129.99
+        originalPrice:
+          type: number
+          format: float
+          description: Original price before discount
+          example: 159.99
+        currency:
+          type: string
+          description: Currency code (ISO 4217)
+          example: "USD"
+        brand:
+          $ref: '#/components/schemas/BrandSummary'
+        category:
+          $ref: '#/components/schemas/CategorySummary'
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductImage'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductVariant'
+        specifications:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            material: "Full-grain leather"
+            waterproof: "Yes - Gore-Tex"
+            weight: "1.8 lbs"
+        rating:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 5
+          example: 4.7
+        reviewCount:
+          type: integer
+          example: 342
+        inStock:
+          type: boolean
+          example: true
+        stockQuantity:
+          type: integer
+          description: Available stock (only shown for authorized partners)
+          example: 156
+        tags:
+          type: array
+          items:
+            type: string
+          example: ["waterproof", "hiking", "outdoor", "bestseller"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ProductSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        price:
+          type: number
+          format: float
+        currency:
+          type: string
+        brand:
+          type: string
+        rating:
+          type: number
+          format: float
+        reviewCount:
+          type: integer
+        thumbnailUrl:
+          type: string
+          format: uri
+        inStock:
+          type: boolean
+
+    ProductSearchResponse:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductSummary'
+        totalCount:
+          type: integer
+          description: Total number of matching products
+          example: 245
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        totalPages:
+          type: integer
+          example: 13
+        filters:
+          type: object
+          description: Available filters based on search results
+          properties:
+            categories:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  count:
+                    type: integer
+            brands:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  count:
+                    type: integer
+            priceRange:
+              type: object
+              properties:
+                min:
+                  type: number
+                max:
+                  type: number
+
+    ProductComparison:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        comparisonMatrix:
+          type: object
+          description: Side-by-side attribute comparison
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        recommendation:
+          type: object
+          properties:
+            bestValue:
+              type: string
+              description: Product ID with best value
+            highestRated:
+              type: string
+              description: Product ID with highest rating
+            lowestPrice:
+              type: string
+              description: Product ID with lowest price
+
+    ProductVariant:
+      type: object
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            size: "10"
+            color: "Brown"
+        price:
+          type: number
+          format: float
+        inStock:
+          type: boolean
+        stockQuantity:
+          type: integer
+
+    ProductImage:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        altText:
+          type: string
+        isPrimary:
+          type: boolean
+        width:
+          type: integer
+        height:
+          type: integer
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "outdoor-footwear"
+        name:
+          type: string
+          example: "Outdoor Footwear"
+        description:
+          type: string
+        parentId:
+          type: string
+        level:
+          type: integer
+        productCount:
+          type: integer
+        imageUrl:
+          type: string
+          format: uri
+        subcategories:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategorySummary'
+
+    CategorySummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        productCount:
+          type: integer
+
+    CategoryList:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
+        totalCount:
+          type: integer
+
+    Brand:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "trailmaster"
+        name:
+          type: string
+          example: "TrailMaster"
+        description:
+          type: string
+        logoUrl:
+          type: string
+          format: uri
+        websiteUrl:
+          type: string
+          format: uri
+        verified:
+          type: boolean
+          description: Whether this is a verified seller
+        rating:
+          type: number
+          format: float
+        productCount:
+          type: integer
+        categories:
+          type: array
+          items:
+            type: string
+        joinedAt:
+          type: string
+          format: date-time
+
+    BrandSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        verified:
+          type: boolean
+
+    BrandList:
+      type: object
+      properties:
+        brands:
+          type: array
+          items:
+            $ref: '#/components/schemas/Brand'
+        totalCount:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    RecommendationResponse:
+      type: object
+      properties:
+        recommendations:
+          type: array
+          items:
+            type: object
+            properties:
+              product:
+                $ref: '#/components/schemas/ProductSummary'
+              reason:
+                type: string
+                description: Why this product is recommended
+                example: "Similar to items you've viewed"
+              score:
+                type: number
+                format: float
+                description: Recommendation confidence score
+        strategy:
+          type: string
+          description: Recommendation strategy used
+          enum: [similar_products, collaborative, trending, personalized]
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: "INVALID_PARAMETER"
+        message:
+          type: string
+          example: "The 'maxPrice' parameter must be greater than 'minPrice'"
+        details:
+          type: object
+          additionalProperties: true

@@ -1,0 +1,61 @@
+apiVersion: gateway.api-platform.wso2.com/v1alpha1
+kind: RestApi
+metadata:
+  name: inventory-api-v1.0
+spec:
+  displayName: Inventory API
+  version: v1.0
+  context: /inventory/$version
+  upstream:
+    main:
+      url: https://inventory-api.free.beeceptor.com
+  operations:
+    # Items - Core inventory items management
+    - method: GET
+      path: /items
+    - method: POST
+      path: /items
+    - method: GET
+      path: /items/{id}
+    - method: PUT
+      path: /items/{id}
+    - method: DELETE
+      path: /items/{id}
+    # Categories - Product categorization
+    - method: GET
+      path: /categories
+    - method: POST
+      path: /categories
+    - method: GET
+      path: /categories/{id}
+    - method: PUT
+      path: /categories/{id}
+    - method: DELETE
+      path: /categories/{id}
+    # Warehouses - Storage locations
+    - method: GET
+      path: /warehouses
+    - method: POST
+      path: /warehouses
+    - method: GET
+      path: /warehouses/{id}
+    - method: PUT
+      path: /warehouses/{id}
+    # Stock levels - Inventory tracking
+    - method: GET
+      path: /stock-levels
+    - method: GET
+      path: /stock-levels/{itemId}
+    - method: PUT
+      path: /stock-levels/{itemId}
+    # Suppliers - Vendor management
+    - method: GET
+      path: /suppliers
+    - method: POST
+      path: /suppliers
+    - method: GET
+      path: /suppliers/{id}
+    - method: PUT
+      path: /suppliers/{id}
+    - method: DELETE
+      path: /suppliers/{id}
